@@ -55,11 +55,13 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-vertx</artifactId>
         </dependency>
-        <dependency>
-            <!-- @Valid on the management API's payloads. -->
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-hibernate-validator</artifactId>
-        </dependency>
+        <!-- NO quarkus-hibernate-validator here either, and it was carried in the scaffold for a
+             `@Valid` that the finished API does not have. There is nothing for `@Valid` to check:
+             the request records deliberately carry no constraint annotations (control/DnsNames owns
+             every rule, and restating one on a DTO is how two copies of it come to disagree), so a
+             validator on the payloads would run over zero constraints. Even the shape-level check
+             it might have earned — "the field is present" — is DnsNames' already, because a null
+             fqdn and a blank one are the same mistake and get the same sentence. -->
         <dependency>
             <!-- The API document for the record-management surface, served under this service's own
                  non-application root. -->

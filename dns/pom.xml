@@ -53,10 +53,13 @@
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-flyway</artifactId>
         </dependency>
-        <dependency>
-            <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-hibernate-validator</artifactId>
-        </dependency>
+        <!-- NO quarkus-hibernate-validator, and its absence is the point rather than an omission.
+             This module's rules live in control/DnsNames and are called from the API layer; a
+             constraint annotation on a DTO would be a second copy of a grammar, and the rules that
+             matter here (no CNAME at the apex, a CNAME admits no siblings, a zone may not be a
+             suffix of another zone) are not expressible as annotations at all. So nothing in this
+             jar ever reaches jakarta.validation, and a dependency nothing uses is one more thing a
+             native image has to be reasoned about. -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>

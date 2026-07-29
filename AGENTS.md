@@ -17,7 +17,7 @@ database to be interesting.
 
 **`service/` compiles to a GraalVM native image**, the same rule qits-gateway, qits-ci and
 qits-workspace-daemon carry. `.sdkmanrc` names `25.0.2-graalce`, so `sdk env` gives you a
-`native-image` and `./mvnw verify -Dnative` produces `service/target/qits-dns`. Three things follow:
+`native-image` and `./mvnw verify -Dnative` produces `service/target/qits-dns`. Four things follow:
 
 - **A missing GraalVM does not fail the build.** Quarkus logs `Cannot find the native-image ...
   Attempting to fall back to container build` and shells out to docker for a 1.8 GB Mandrel image.
@@ -31,6 +31,15 @@ qits-workspace-daemon carry. `.sdkmanrc` names `25.0.2-graalce`, so `sdk env` gi
   binary died at boot on exactly that default while every JVM test stayed green).
   `DnsPackagedSurfaceIT` is the guard, and it relocates `user.home` rather than restating the
   settings, precisely so the shipped values stay the ones under test.
+- **The binary's NAME is spelled in two files and they must agree.** `quarkus.package.output-name`
+  in `application.properties` sets the base, and `quarkus.package.jar.add-runner-suffix=false` is
+  what drops the `-runner` — verified against a real `-Dnative` build on Quarkus 3.34.6, where
+  `PackageConfig.computedRunnerSuffix()` reads exactly that key and the *native* naming goes through
+  it too, despite the `jar.` in the path. (There is no `quarkus.package.add-runner-suffix`; the
+  root-level key is `quarkus.package.runner-suffix`, the suffix *string*.) The other spelling is
+  failsafe's `native.image.path` in `service/pom.xml`. If the two drift, failsafe launches nothing
+  and the IT passes vacuously — the worst outcome a gate can have — so confirm `Executing "<path>"`
+  in a native build's log names the binary, not just that the build was green.
 
 ## The contract
 
@@ -134,6 +143,39 @@ Record names are exactly one of six shapes — `@`, `l`, `l.l`, `*`, `*.l`, `*.*
 plus the matching table above are the two places the two-label depth limit lives. Extending to
 deeper names is mechanical in both; the stated requirement stops at two, so this does.
 
+**Neither pom carries `quarkus-hibernate-validator`, and that is the same rule stated as a
+dependency.** Both had it in the scaffold — `dns/` never used it, and `service/`'s was for a `@Valid`
+the finished API does not have, because there is nothing on a request record for it to check. A
+validator over zero constraints is a dependency the native image has to be reasoned about for no
+behaviour. Adding it back means adding an annotation, which means having two copies of a rule.
+
+## The management API
+
+`service/…/api/` — two JAX-RS resources, the token filter, the exception mapper. Two things about it
+are not obvious from reading the classes:
+
+**Both controllers are rooted at `@Path("/")` and every method spells its whole path.** Not style:
+Quarkus REST selects ONE resource class by its class-level template and matches methods only within
+it, with no fallback to a second candidate. `ZoneController` at `@Path("/zones")` therefore claimed
+`/zones/{id}/records` — `RecordController`'s route — found no method for it, and answered **404**.
+Nothing logs that; it looks exactly like a missing resource. §6's paths interleave (`/zones/{id}`
+and `/zones/{id}/records` and `/records/{id}`), so the two classes share the root template and one
+match set. Any resource added under `/dns/api` whose paths interleave with these has to do the same.
+
+**The snapshot rebuild is a line in the resource, after the `@Transactional` service call returns.**
+That is the ordering §"The snapshot" requires, expressed where a reader of the write path passes
+through it — the service cannot see its own commit, and the resource method is not transactional, so
+the commit has happened by the next line. It also gets the failure side for free: a service call that
+throws never reaches the rebuild. `DnsSnapshotRebuildTest` asserts that as `assertSame` on the
+snapshot *reference*, not on its contents — a rebuild after a rolled-back write would produce
+identical contents and prove nothing.
+
+**The token filter guards every write verb under `/dns/api`, with no path predicate** — a deliberate
+divergence from `CiTokenFilter`, which matches one named resource so that a future write has to opt
+in. The reasoning does not carry: a write here changes what a public nameserver answers, so a new
+route forgotten by a predicate would be an unauthenticated way to repoint a hostname. Reads are never
+guarded; what this API holds is already public over UDP.
+
 ## dnsjava
 
 `dnsjava:dnsjava` (**not** `org.dnsjava:dnsjava`, which is dead at 2.0.6 from 2010), used strictly
@@ -216,6 +258,24 @@ constraint. No matching change.
 - **Plain JUnit 5, no Mockito.** The resolver suite builds `ZoneData`/`StoredRecord`/`ZoneSnapshot`
   by hand and asserts pure functions; the wire suite binds real sockets and scripts the resolver
   with a CDI `@Alternative`. Between them there is nothing left that a mock would be for.
+- **A CDI `@Alternative` in test sources is enabled by a `QuarkusTestProfile`, never by
+  `@Priority`.** `ScriptedDnsResolver` is the case that fixed the rule. A `@Priority` on the bean
+  selects it *globally*, for every test in the module — which was harmless while it was the only
+  `DnsResolver` in existence and became silent damage the moment `DnsResolverImpl` landed, because
+  `DnsWriteThenResolveTest` would then have been asserting canned answers against the fake instead of
+  closing the write-then-resolve loop. It would have stayed green and proved nothing, and no failure
+  anywhere would have said so. So the alternative carries no priority, `ScriptedResolverProfile`
+  selects it via `getEnabledAlternatives()`, and the wire tests declare that profile. The cost is one
+  extra Quarkus start; the gain is that "which implementation is this test running against" is a line
+  in the test class rather than a property of the module.
+- **`WireClient` is shared with the API suite** and is public for that reason. It stays in the `wire`
+  package — that is where the knowledge it encodes lives — and `DnsWriteThenResolveTest` and
+  `DnsPackagedSurfaceIT` import it to ask a real question over a real datagram after an HTTP write.
+- **API tests give every zone a unique fqdn** (`DnsApiFixtures.uniqueZone`, under RFC 6761's
+  reserved `.test`). `@QuarkusTest` classes on one profile share an application and therefore a
+  database, and this module's write rules are about the whole database — a zone may not be a suffix
+  or prefix of any other — so a fixed name is a 409 that appears only when two classes run in the
+  same JVM in a particular order.
 - App-level config lives in `service/src/main/resources/application.properties` — this module is the
   deployable, and Quarkus merges that file into the test config rather than letting
   `src/test/resources/application.properties` shadow it. **Never re-declare an app-level setting in
@@ -230,6 +290,11 @@ constraint. No matching change.
   they only exist once the app is built — the routes' build-time prefixes, the shipped datasource URL,
   Flyway's migration surviving as a classpath resource, and that the UDP listener answers from the
   binary. That last one is what keeps the dnsjava-in-native finding true instead of merely once-true.
+- **`DnsPackagedSurfaceIT` is the one place `qits.dns.port=0` cannot be used.** There is no
+  `boundPort()` across a process boundary, so its profile picks a free UDP port itself — bind a
+  `DatagramSocket(0)`, read the port, close it — and passes it as a config override. The TOCTOU
+  between the close and the artifact's bind is real and accepted: losing the race is a loud bind
+  failure at launch, where a fixed 8053 would fight a developer's own server deterministically.
 - A `Failed to start quarkus` / `Port already bound: 8081` failure is the known Quarkus flake —
   `@QuarkusTest` restarts racing for the test port. Re-run first. `DnsPackagedSurfaceIT` is
   deliberately outside that race: failsafe passes it `quarkus.http.test-port=0`.
