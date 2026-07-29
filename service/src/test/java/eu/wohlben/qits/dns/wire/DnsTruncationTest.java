@@ -8,6 +8,7 @@ import eu.wohlben.qits.dns.resolve.RecordData;
 import eu.wohlben.qits.dns.resolve.ResolutionResult;
 import eu.wohlben.qits.dns.resolve.WireType;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,6 +37,7 @@ import org.xbill.DNS.Section;
  * <p>Both then go over TCP, which is what TC=1 instructs, and come back whole.
  */
 @QuarkusTest
+@TestProfile(ScriptedResolverProfile.class)
 class DnsTruncationTest {
 
   /** Enough A records that the set cannot fit in 512 bytes by any encoding. */

@@ -8,6 +8,7 @@ import eu.wohlben.qits.dns.resolve.RecordData;
 import eu.wohlben.qits.dns.resolve.ResolutionResult;
 import eu.wohlben.qits.dns.resolve.WireType;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -38,6 +39,7 @@ import org.xbill.DNS.Section;
  * server that replies FORMERR to everything.
  */
 @QuarkusTest
+@TestProfile(ScriptedResolverProfile.class)
 class DnsMalformedMessageTest {
 
   @Inject DnsWireServer server;

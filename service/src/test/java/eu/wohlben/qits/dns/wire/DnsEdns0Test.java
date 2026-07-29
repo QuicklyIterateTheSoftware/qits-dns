@@ -10,6 +10,7 @@ import eu.wohlben.qits.dns.resolve.RecordData;
 import eu.wohlben.qits.dns.resolve.ResolutionResult;
 import eu.wohlben.qits.dns.resolve.WireType;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,6 +35,7 @@ import org.xbill.DNS.Section;
  * came back.
  */
 @QuarkusTest
+@TestProfile(ScriptedResolverProfile.class)
 class DnsEdns0Test {
 
   private static final int RECORDS = 30;

@@ -36,18 +36,23 @@ import org.xbill.DNS.TextParseException;
  *
  * <p>Every socket here is short-lived and explicitly timed out. A hang in a socket suite is a build
  * that parks rather than a build that fails, which is the worst of the two.
+ *
+ * <p>Public, and used from the {@code api} suite as well as this one — {@code
+ * DnsWriteThenResolveTest} and {@code DnsPackagedSurfaceIT} write a record over HTTP and then ask
+ * for it over real UDP, which is the loop this service exists to close. It stays in the {@code
+ * wire} package because that is where the knowledge it encodes lives.
  */
-final class WireClient {
+public final class WireClient {
 
   /**
    * Long enough for a loopback round trip by three orders of magnitude, short enough to fail fast.
    */
-  static final int TIMEOUT_MILLIS = 2000;
+  public static final int TIMEOUT_MILLIS = 2000;
 
   private WireClient() {}
 
   /** A query with an explicit id, so a test can assert the response carried it back. */
-  static Message query(int id, String qname, int qtype) throws TextParseException {
+  public static Message query(int id, String qname, int qtype) throws TextParseException {
     // new Message(int), never new Message(): the no-arg constructor reads Header's static
     // SecureRandom to invent an id. Harmless in a test, but an explicit id is what lets the round
     // trip assert on it, and this is the same constructor src/main uses for the same class of
@@ -59,7 +64,7 @@ final class WireClient {
   }
 
   /** The same, advertising an EDNS0 UDP payload size. */
-  static Message queryWithEdns(int id, String qname, int qtype, int payloadSize)
+  public static Message queryWithEdns(int id, String qname, int qtype, int payloadSize)
       throws TextParseException {
     Message message = query(id, qname, qtype);
     message.addRecord(new OPTRecord(payloadSize, 0, 0), Section.ADDITIONAL);
@@ -70,14 +75,14 @@ final class WireClient {
    * Query bytes. {@code toWire(int)} rather than the no-arg form, which dnsjava's own javadoc says
    * not to transmit — it skips OPT handling, so an EDNS0 query built through it would not be one.
    */
-  static byte[] wire(Message message) {
+  public static byte[] wire(Message message) {
     return message.toWire(65535);
   }
 
   /**
    * One UDP exchange, returning the raw response bytes. Sizes matter here, so bytes, not Message.
    */
-  static byte[] udp(int port, Message query) throws IOException {
+  public static byte[] udp(int port, Message query) throws IOException {
     try (DatagramSocket socket = new DatagramSocket()) {
       socket.setSoTimeout(TIMEOUT_MILLIS);
       send(socket, port, wire(query));
@@ -89,7 +94,7 @@ final class WireClient {
    * Sends {@code request} and asserts nothing comes back within the timeout, by letting the receive
    * throw {@link java.net.SocketTimeoutException}. Returns true when the datagram was dropped.
    */
-  static boolean udpSilent(int port, byte[] request) throws IOException {
+  public static boolean udpSilent(int port, byte[] request) throws IOException {
     try (DatagramSocket socket = new DatagramSocket()) {
       socket.setSoTimeout(TIMEOUT_MILLIS);
       send(socket, port, request);
@@ -117,7 +122,7 @@ final class WireClient {
     return Arrays.copyOf(buffer, packet.getLength());
   }
 
-  static Message parse(byte[] wire) throws IOException {
+  public static Message parse(byte[] wire) throws IOException {
     return new Message(wire);
   }
 
@@ -125,14 +130,14 @@ final class WireClient {
    * A TCP connection that outlives one query, because RFC 7766 says a resolver may reuse one and
    * the framing test says so twice.
    */
-  static final class Tcp implements Closeable {
+  public static final class Tcp implements Closeable {
 
     private final Socket socket;
     private final DataInputStream in;
     private final OutputStream out;
     private int lastLengthPrefix = -1;
 
-    Tcp(int port) throws IOException {
+    public Tcp(int port) throws IOException {
       socket = new Socket();
       socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), TIMEOUT_MILLIS);
       socket.setSoTimeout(TIMEOUT_MILLIS);
@@ -141,7 +146,7 @@ final class WireClient {
     }
 
     /** Writes the RFC 1035 §4.2.2 two-byte big-endian length prefix, then the message. */
-    byte[] exchange(Message query) throws IOException {
+    public byte[] exchange(Message query) throws IOException {
       byte[] request = wire(query);
       out.write(new byte[] {(byte) (request.length >> 8), (byte) request.length});
       out.write(request);
@@ -155,7 +160,7 @@ final class WireClient {
     /**
      * The prefix the server sent on the last exchange, so a test can assert it framed correctly.
      */
-    int lastLengthPrefix() {
+    public int lastLengthPrefix() {
       return lastLengthPrefix;
     }
 

@@ -7,6 +7,7 @@ import eu.wohlben.qits.dns.resolve.RecordData;
 import eu.wohlben.qits.dns.resolve.ResolutionResult;
 import eu.wohlben.qits.dns.resolve.WireType;
 import io.quarkus.test.junit.QuarkusTest;
+import io.quarkus.test.junit.TestProfile;
 import jakarta.inject.Inject;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -28,6 +29,7 @@ import org.xbill.DNS.Section;
  * after every message instead of treating a connection as one exchange.
  */
 @QuarkusTest
+@TestProfile(ScriptedResolverProfile.class)
 class DnsTcpFramingTest {
 
   @Inject DnsWireServer server;

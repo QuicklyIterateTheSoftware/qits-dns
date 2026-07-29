@@ -2,7 +2,6 @@ package eu.wohlben.qits.dns.wire;
 
 import eu.wohlben.qits.dns.resolve.DnsResolver;
 import eu.wohlben.qits.dns.resolve.ResolutionResult;
-import jakarta.annotation.Priority;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Alternative;
 import java.util.Map;
@@ -18,17 +17,21 @@ import java.util.concurrent.ConcurrentHashMap;
  * instead of building a snapshot to imply it, and it means this suite has no dependency at all on
  * the §3 matching rules, which are somebody else's module and somebody else's test file.
  *
- * <p>A globally-enabled {@link Alternative}, so it is the {@link DnsResolver} the wire server
- * injects for the whole test run. When the real implementation lands in {@code dns/} this one
- * displaces it here and nowhere else.
+ * <p><b>An {@link Alternative} with no {@code @Priority}, enabled only by {@link
+ * ScriptedResolverProfile}.</b> It carried {@code @Priority(1)} while it was the only {@code
+ * DnsResolver} in existence, which made it globally selected — and once the real {@code
+ * DnsResolverImpl} landed, that would have silently displaced it for EVERY test in this module,
+ * including the write-then-resolve loop whose entire subject is the real one. A fake that replaces
+ * the thing under test turns a passing test into no test at all, and nothing about the arrangement
+ * would have said so. Scoping the selection to a profile makes "which resolver am I running
+ * against" a line in the test class rather than a property of the module.
  *
- * <p>{@code @ApplicationScoped}, so a test scripts the same instance the server holds. Tests share
- * a Quarkus instance, so each one {@link #reset}s first — leftovers from another test class are
- * exactly the kind of cross-talk that makes a socket suite flaky for reasons that look like the
- * network.
+ * <p>{@code @ApplicationScoped}, so a test scripts the same instance the server holds. Tests that
+ * share this profile share a Quarkus instance, so each one {@link #reset}s first — leftovers from
+ * another test class are exactly the kind of cross-talk that makes a socket suite flaky for reasons
+ * that look like the network.
  */
 @Alternative
-@Priority(1)
 @ApplicationScoped
 public class ScriptedDnsResolver implements DnsResolver {
 
