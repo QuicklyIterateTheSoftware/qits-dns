@@ -15,7 +15,6 @@ import io.vertx.core.parsetools.RecordParser;
 import jakarta.annotation.PreDestroy;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
-import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
 import java.util.OptionalInt;
 import java.util.concurrent.TimeUnit;
@@ -95,23 +94,16 @@ public class DnsWireServer {
   @Inject DnsCodec codec;
 
   /**
-   * The resolution contract, looked up rather than injected directly — and the one thing in this
-   * class that is shaped by the repo's build order rather than by DNS.
+   * The resolution contract, whose sole implementation lives in the {@code dns} module.
    *
-   * <p>{@link DnsResolver}'s sole implementation lives in the {@code dns} module. A direct
-   * {@code @Inject DnsResolver} makes {@code service}'s Quarkus augmentation fail at BUILD time
-   * when that implementation is absent, which is a virtue in a finished repo and a hard coupling
-   * while the two modules are being written in parallel: the wire layer would stop compiling on the
-   * strength of a class it does not own and cannot write. {@link Instance} moves the same check
-   * from augmentation to {@link #onStart}, where a missing implementation is a loud boot failure
-   * rather than a silent one — and {@code DnsPackagedSurfaceIT} boots the packaged binary, so the
-   * property "a shipped qits-dns has a resolver" is still enforced by the gate, one phase later.
-   *
-   * <p>Resolved exactly once, at startup. Never per query: {@link Instance#get()} is a lookup, and
-   * doing it on the event loop for every datagram would put a container lookup in the hot path of
-   * the one code path that must not touch anything slow.
+   * <p>Injected directly, which means {@code service}'s Quarkus augmentation fails at BUILD time if
+   * that implementation ever goes missing — a nameserver with no resolver has nothing to say, and
+   * the earliest possible failure for that is the right one. This was briefly an {@code
+   * Instance<DnsResolver>} lookup while the two modules were written in parallel and the
+   * implementation did not exist yet; that was scaffolding, and keeping it would have traded
+   * build-time bean-graph validation for a boot-time check in exchange for nothing.
    */
-  @Inject Instance<DnsResolver> resolvers;
+  @Inject DnsResolver resolver;
 
   @ConfigProperty(name = "qits.dns.host")
   String host;
@@ -123,9 +115,6 @@ public class DnsWireServer {
   private NetServer tcp;
   private volatile int boundPort;
 
-  /** Volatile because it is written on the startup thread and read on every event loop. */
-  private volatile DnsResolver resolver;
-
   /**
    * Unparseable messages seen since boot. Counted rather than merely dropped because the count is
    * the only evidence this path leaves — the response that would have shown up in a log is exactly
@@ -135,14 +124,6 @@ public class DnsWireServer {
   private final AtomicLong dropped = new AtomicLong();
 
   void onStart(@Observes StartupEvent event) {
-    if (resolvers.isUnsatisfied()) {
-      // Before either socket is bound: a nameserver that cannot resolve has nothing to say, and
-      // binding first would mean answering the internet with a NullPointerException per packet.
-      throw new IllegalStateException(
-          "no DnsResolver implementation is on the classpath; qits-dns cannot answer anything");
-    }
-    resolver = resolvers.get();
-
     // UDP first, and TCP onto whatever port UDP ended up with. With qits.dns.port=0 (the test
     // default) somebody has to pick the number and the other has to follow, and it must be the same
     // number on both protocols or a truncation retry lands nowhere. The residual risk is real but
