@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-dns</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The DNS domain: zones, records, and the resolution contract itself. A plain library jar —
+         entities, persistence, control, mapper, dto, error, AND the resolver core (ZoneSnapshot,
+         the matching rules, ResolutionResult).
+
+         FRAMEWORK-FREE, and here that is load-bearing rather than tidy: no JAX-RS, no vert.x and
+         NO DNSJAVA. The resolver is specified as a pure function from (qname, qtype, snapshot) to a
+         response, and it is only testable as one if nothing in this module can reach a socket or a
+         codec library's types. The wire layer's dependency on a particular DNS codec stops at the
+         `service` module's `DnsCodec` seam and never crosses into here.
+
+         It owns its OWN named datasource + persistence unit + Flyway lineage — a separate
+         file-based H2 under ~/.qits/data/dns (see
+         src/main/resources/META-INF/microprofile-config.properties) — the qits-ci arrangement
+         ported, and for the same reason: the module is extraction-shaped from day one.
+
+         The directory is `dns/` while the artifactId is `qits-dns-domain`: this module is the
+         domain layer of the qits-dns repo, and `eu.wohlben.qits:qits-dns-dns` would be nonsense. -->
+    <artifactId>qits-dns-domain</artifactId>
+    <name>qits-dns :: domain</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-orm-panache</artifactId>
+        </dependency>
+        <dependency>
+            <!-- ObjectMapper bean availability for consumers (no REST needed). -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-jdbc-h2</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.mapstruct</groupId>
+            <artifactId>mapstruct</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- The consuming Quarkus app needs an index of this jar's beans and entities;
+                     without it `service` boots with no DnsZone entity and no repository bean, and
+                     the failure is a runtime "unknown entity" rather than a build error. -->
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>

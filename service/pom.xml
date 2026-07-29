@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>eu.wohlben.qits</groupId>
+        <artifactId>qits-dns</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <!-- The two surfaces qits-dns exposes to the world, both of which need a runtime stack and
+         therefore cannot live in the framework-free `dns` module:
+
+           eu.wohlben.qits.dns.wire — the UDP and TCP listeners, the DnsCodec seam and its
+                                      dnsjava-backed implementation. This is the internet-facing
+                                      half and the only place in the repo that parses hostile bytes.
+           eu.wohlben.qits.dns.api  — the record-management JAX-RS routes, the static-token filter
+                                      over the write verbs, and the DnsException -> HTTP mapper.
+
+         Same line that put `api` beside `daemonhost` in qits-ci: transport lives here, rules live
+         in the domain module.
+
+         A DEPLOYABLE APP, not a library JAR — see `<packaging>quarkus</packaging>` below and the
+         comment on the quarkus-maven-plugin. -->
+    <artifactId>qits-dns-service</artifactId>
+    <name>qits-dns :: service</name>
+    <packaging>quarkus</packaging>
+
+    <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>qits-dns-domain</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-rest-jackson</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The managed io.vertx.core.Vertx the DNS listeners inject, to open a DatagramSocket
+                 and a NetServer on qits.dns.port.
+
+                 DECLARED EXPLICITLY EVEN THOUGH quarkus-rest DRAGS VERTX IN ANYWAY, because what
+                 this module does with it is not HTTP. Everything else in the repo family reaches
+                 vert.x as an implementation detail of its web stack; here it is the API being
+                 programmed against, and a listener bound to a port of its own has no business
+                 depending on the REST extension's transitive closure to exist. If quarkus-rest ever
+                 leaves this pom, the DNS server must not stop compiling. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-vertx</artifactId>
+        </dependency>
+        <dependency>
+            <!-- @Valid on the management API's payloads. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-hibernate-validator</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The API document for the record-management surface, served under this service's own
+                 non-application root. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-smallrye-openapi</artifactId>
+        </dependency>
+        <dependency>
+            <!-- OTLP export to qits-observability. The extension is what instruments the process;
+                 the endpoint and protocol in application.properties are what make it arrive, since
+                 the defaults are gRPC to localhost:4317 and the receiver speaks HTTP/protobuf. -->
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-opentelemetry</artifactId>
+        </dependency>
+        <dependency>
+            <!-- The DNS message codec, behind the wire package's own DnsCodec seam. Version from
+                 the root pom's dependencyManagement, where the groupId correction is recorded.
+
+                 USED FOR Message / Name / Record PARSE AND ENCODE ONLY. Its resolver and lookup
+                 machinery — Lookup, SimpleResolver's configuration discovery, ResolverConfig — is
+                 where the ServiceLoader lookups and the system-configuration reflection live, and
+                 that is precisely the code a GraalVM native image needs to be told about. This
+                 server resolves nothing and looks nothing up; it decodes a question and encodes an
+                 answer. Keeping to that surface is what makes the native build a question about
+                 codec classes rather than about dnsjava as a whole.
+
+                 (dnsjava's SimpleResolver DOES appear in the wire test suite, as the CLIENT driving
+                 real queries at our socket. That is test scope in every sense that matters — it is
+                 never in the native image.) -->
+            <groupId>dnsjava</groupId>
+            <artifactId>dnsjava</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-junit5</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.rest-assured</groupId>
+            <artifactId>rest-assured</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <!-- This module is the DEPLOYABLE, not a library jar, and `<packaging>quarkus</packaging>`
+                     above is what says so: it binds generate-code, generate-code-tests and build into
+                     the lifecycle, so augmentation stops being an execution block that can be
+                     misplaced. One already was, in a sibling repo — declared under a `<build>` whose
+                     `<testResources>` came first, so the goal never applied while `mvn verify` stayed
+                     green and the deployable was never actually built. A packaging type cannot fail
+                     quietly that way: drop the `<extensions>true</extensions>` below and the build
+                     stops at "Unknown packaging: quarkus". Version comes from the root pom's
+                     pluginManagement. -->
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+            </plugin>
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <!-- DnsPackagedSurfaceIT binds here: boot the packaged artifact, let Flyway run,
+                     answer one UDP query and land one API write. skipITs=true is the parent's
+                     default, so a fresh clone's `mvn verify` is green without it; the `native`
+                     profile below flips it, which is the only build that has a binary to point at.
+
+                     NO `<argLine>-Djava.net.preferIPv4Stack=true</argLine>` here, unlike qits-ci.
+                     That line exists there so a docker container can dial back into the test JVM
+                     through host.docker.internal, which forwards IPv4 only. This repo has no
+                     container in any test: the ITs reach their launched artifact over loopback, and
+                     the wire suite binds sockets in-process. Adding it would pin a network stack
+                     for no reader — and a DNS server is exactly the kind of thing that should be
+                     reachable over both families, so the default is the one worth keeping. -->
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- How @QuarkusIntegrationTest finds the compiled binary in a `-Dnative`
+                             build; without it the native run has nothing to launch. The name is
+                             `quarkus.package.output-name` from application.properties, NOT maven's
+                             finalName — with an output-name set, ${project.build.finalName}-runner
+                             is a path that does not exist, and failsafe would silently launch
+                             nothing. The two spellings move together. -->
+                        <native.image.path>${project.build.directory}/qits-dns</native.image.path>
+                        <!-- Launch the packaged app on a free HTTP port instead of the default
+                             8081. 8081 is the @QuarkusTest port, and surefire's last Quarkus
+                             instance can still hold it when failsafe starts — which would fail the
+                             native gate for a reason that has nothing to do with the binary. 0 is
+                             understood by the launcher: it reads the actual port back out of the
+                             startup line. (The DNS port is a separate matter and is set to 0 in
+                             src/test/resources/application.properties for the same reason.) -->
+                        <quarkus.http.test-port>0</quarkus.http.test-port>
+                        <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>io.smallrye</groupId>
+                <artifactId>jandex-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!-- GraalVM native build (the profile qits-gateway, qits-ci and qits-workspace-daemon
+             already carry): `-Dnative` turns the fast-jar off and the native image on. It lives in
+             THIS module, not the root pom, because only this module is an application — `dns` is a
+             library jar with nothing to native-compile.
+
+             skipITs flips with it so the build runs DnsPackagedSurfaceIT against the binary it just
+             produced rather than packaging one nobody starts. That IT is what keeps the dnsjava
+             finding true: the codec's native behaviour is not something the JVM suite can have an
+             opinion about. -->
+        <profile>
+            <id>native</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+                <skipITs>false</skipITs>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

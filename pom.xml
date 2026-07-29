@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- Standalone parent for qits-dns: an AUTHORITATIVE-ONLY DNS server for the hostnames the
+         platform hands out to its own deployments (`qits.eu`, `<epic>.qits-dev.eu`,
+         `<app>.<epic>.qits-dev.eu`), plus the HTTP API the other modules create those names with.
+         Zones are delegated to it at a registrar; it recurses for nobody, transfers to nobody, and
+         signs nothing.
+
+         The thing that makes this repo unlike its siblings: it owns a UDP socket on the open
+         internet, so the bytes it parses are hostile by default and the wire layer is written that
+         way (drop malformed datagrams rather than answer them, REFUSE ANY/AXFR, keep responses
+         small enough that the amplification factor is ~1).
+
+         DELIBERATELY ITS OWN GAV, the qits-ci case ported verbatim. The child directories are `dns`
+         and `service`, generic names that would collide in the shared ~/.m2 (and the qits_shared_m2
+         volume every workspace container mounts) with any other repo's `eu.wohlben:service`. So the
+         coordinates are namespaced (`eu.wohlben.qits:qits-dns-*`) while the DIRECTORIES stay short.
+
+         Versions that must stay in step with qits (Quarkus platform, JDK release, MapStruct,
+         Lombok) are duplicated here on purpose: a clone of THIS repo alone must build, with no
+         monorepo and no parent to inherit from. -->
+    <groupId>eu.wohlben.qits</groupId>
+    <artifactId>qits-dns</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>qits-dns</name>
+
+    <modules>
+        <!-- Listed first: `service` depends on it. -->
+        <module>dns</module>
+        <module>service</module>
+    </modules>
+
+    <properties>
+        <maven.compiler.release>25</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+        <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+        <quarkus.platform.version>3.34.6</quarkus.platform.version>
+
+        <compiler-plugin.version>3.15.0</compiler-plugin.version>
+        <surefire-plugin.version>3.5.4</surefire-plugin.version>
+        <failsafe-plugin.version>3.5.4</failsafe-plugin.version>
+        <jandex-plugin.version>3.4.0</jandex-plugin.version>
+        <lombok.version>1.18.38</lombok.version>
+        <lombok-mapstruct-binding.version>0.2.0</lombok-mapstruct-binding.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <dnsjava.version>3.6.5</dnsjava.version>
+
+        <!-- `mvn verify` on a fresh clone must be green with no docker and no credentials — this
+             repo's first rule. The only IT planned here is the packaged-surface one against the
+             `-Dnative` binary, which nothing but a native build can run, so it is off by default
+             and the `native` profile in `service` flips it. -->
+        <skipITs>true</skipITs>
+
+        <!-- qits-ci carries a `qits.it.excluded-groups` property here, to keep its docker-backed
+             ITs out of the native gate. NOT PORTED, and the omission is a decision rather than an
+             oversight: this repo has no docker-backed test and no plan for one — the wire suite
+             binds real sockets on ephemeral ports in-process and the API suite talks to itself — so
+             there is no tag to exclude and an empty exclusion property would be a knob wired to
+             nothing. If a test here ever does need docker, tag it and reintroduce the property
+             together with the tag. -->
+
+        <!-- Surefire's @{argLine} has no value unless something (jacoco/quarkus) sets it. -->
+        <argLine/>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>${quarkus.platform.group-id}</groupId>
+                <artifactId>${quarkus.platform.artifact-id}</artifactId>
+                <version>${quarkus.platform.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>${lombok.version}</version>
+                <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.mapstruct</groupId>
+                <artifactId>mapstruct</artifactId>
+                <version>${mapstruct.version}</version>
+            </dependency>
+            <dependency>
+                <!-- The DNS message codec, used by `service`'s wire layer for Message/Name/Record
+                     parse and encode ONLY — never its resolver/lookup machinery, which is where the
+                     ServiceLoader and system-configuration reflection that a native image dislikes
+                     actually live.
+
+                     THE GROUP ID IS `dnsjava`, NOT `org.dnsjava`. The feature plan (§5) says
+                     `org.dnsjava:dnsjava` and it is wrong: `org/dnsjava/dnsjava` on Maven Central
+                     stops at 2.0.6 (2010), and the live coordinates for the maintained 3.x line are
+                     `dnsjava:dnsjava`. Recorded here because the wrong spelling resolves to
+                     something that exists, so the mistake reads as "an old version" rather than as
+                     a typo.
+
+                     Its only runtime dependency is org.slf4j:slf4j-api, which the Quarkus BOM
+                     already binds — so this adds one jar, not a tree. -->
+                <groupId>dnsjava</groupId>
+                <artifactId>dnsjava</artifactId>
+                <version>${dnsjava.version}</version>
+            </dependency>
+            <!-- The reactor's own module, so `service` depends on it version-less. -->
+            <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>qits-dns-domain</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>${quarkus.platform.group-id}</groupId>
+                    <artifactId>quarkus-maven-plugin</artifactId>
+                    <version>${quarkus.platform.version}</version>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${compiler-plugin.version}</version>
+                    <configuration>
+                        <parameters>true</parameters>
+                        <!-- Incremental compilation leaves stale MapStruct *Impl classes behind
+                             when a mapper's shape changes; the monorepo disables it for the same
+                             reason. -->
+                        <useIncrementalCompilation>false</useIncrementalCompilation>
+                        <annotationProcessorPaths>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                                <version>${lombok.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.mapstruct</groupId>
+                                <artifactId>mapstruct-processor</artifactId>
+                                <version>${mapstruct.version}</version>
+                            </path>
+                            <path>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok-mapstruct-binding</artifactId>
+                                <version>${lombok-mapstruct-binding.version}</version>
+                            </path>
+                        </annotationProcessorPaths>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${surefire-plugin.version}</version>
+                    <configuration>
+                        <systemPropertyVariables>
+                            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                        </systemPropertyVariables>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <artifactId>maven-failsafe-plugin</artifactId>
+                    <version>${failsafe-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>io.smallrye</groupId>
+                    <artifactId>jandex-maven-plugin</artifactId>
+                    <version>${jandex-plugin.version}</version>
+                    <executions>
+                        <execution>
+                            <id>make-index</id>
+                            <goals>
+                                <goal>jandex</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+</project>
