@@ -1,6 +1,7 @@
 package eu.wohlben.qits.dns.persistence;
 
 import eu.wohlben.qits.dns.entity.DnsRecord;
+import eu.wohlben.qits.dns.entity.DnsRecordType;
 import io.quarkus.hibernate.orm.panache.PanacheRepositoryBase;
 import jakarta.enterprise.context.ApplicationScoped;
 import java.util.List;
@@ -30,5 +31,19 @@ public class DnsRecordRepository implements PanacheRepositoryBase<DnsRecord, Str
    */
   public long deleteByZoneId(String zoneId) {
     return delete("zoneId", zoneId);
+  }
+
+  /**
+   * Deletes every row of one {@code (zone, name, type)} — the first half of the replace-by-set
+   * verb.
+   *
+   * <p>A bulk delete rather than a loop over managed entities, and that is what makes the replace
+   * safe: Hibernate orders a flush INSERTS BEFORE DELETES, so persisting the new rows and letting
+   * the old ones be removed at commit would violate {@code uq_dns_record} whenever a value survives
+   * the replace — the overwhelmingly common case for an idempotent re-deploy. This executes as its
+   * own statement at once, so by the time the new rows are persisted the old ones are gone.
+   */
+  public long deleteByZoneIdNameAndType(String zoneId, String name, DnsRecordType type) {
+    return delete("zoneId = ?1 and name = ?2 and type = ?3", zoneId, name, type);
   }
 }
