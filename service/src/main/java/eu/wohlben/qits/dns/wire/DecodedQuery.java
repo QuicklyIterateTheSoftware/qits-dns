@@ -22,6 +22,13 @@ import java.util.OptionalInt;
  * means the seam survives replacing that codec: a hand-rolled implementation gets the same input.
  * The array is not defensively copied — it is the receive buffer's contents and nothing downstream
  * writes to it.
+ *
+ * <p>It holds EXACTLY the message, {@code length} bytes and no more: {@link DnsCodec#decode} is
+ * handed a buffer and a length, and it is the decoder that trims when those differ. So {@code
+ * wire.length} is the message length and a re-parse of this array parses the same message, which is
+ * what makes rebuilding the response from it sound rather than merely usual. (Both listeners hand
+ * over exact arrays already — a datagram's payload and a length-prefixed TCP frame are both framed
+ * for us — so the trim is a contract, not a copy anyone pays for.)
  */
 public record DecodedQuery(
     int id,
