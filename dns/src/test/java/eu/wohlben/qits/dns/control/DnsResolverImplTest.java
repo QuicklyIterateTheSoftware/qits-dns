@@ -347,6 +347,20 @@ public class DnsResolverImplTest {
   }
 
   @Test
+  public void theChaseCanLandOnAZonesBareApex() {
+    // The one chase target with zero labels above an apex, so it takes `candidates`' `@` branch
+    // rather than either wildcard branch. Nothing about the code distinguishes it, which is exactly
+    // why it is worth pinning: `relativeTo` returns "" here and an off-by-one in that arithmetic
+    // would surface only on this shape.
+    ResolutionResult result =
+        over(plain(ZONE, cname("feature", OTHER_ZONE)), plain(OTHER_ZONE, a("@", "10.2.2.2")))
+            .resolve("feature." + ZONE, TYPE_A);
+
+    assertEquals(List.of(OTHER_ZONE, "10.2.2.2"), values(result));
+    assertOwner(OTHER_ZONE, result.answers().get(1));
+  }
+
+  @Test
   public void aChaseOntoANameWithNoRowsAppendsNothing() {
     ResolutionResult result =
         over(plain(ZONE, cname("feature", "nowhere." + ZONE))).resolve("feature." + ZONE, TYPE_A);
