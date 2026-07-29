@@ -19,11 +19,15 @@ import java.util.List;
  * answer, an NXDOMAIN, a NODATA. False for {@link #refused()}, {@link #notImplemented()} and {@link
  * #formatError()}, which are statements about the request rather than about a zone we hold.
  *
- * <p>Open where the plan is: when SOA synthesis is off ({@code qits.dns.ns-names} or {@code
- * qits.dns.hostmaster} blank) a zone has no SOA to put in authority, and the negative factories
- * below have nothing to be handed. The resolver decides what that means — the plausible reading is
- * a negative answer with an empty authority section, since the alternative is refusing to say a
- * name does not exist merely because nobody configured a hostmaster address.
+ * <p><b>Settled:</b> when SOA synthesis is off ({@code qits.dns.ns-names} or {@code
+ * qits.dns.hostmaster} blank — the shipped default) a zone has no SOA to put in authority. The
+ * negative factories below then take {@code null} and the answer carries an EMPTY authority
+ * section. The negative answer is still given: refusing to say a name does not exist because nobody
+ * configured a hostmaster address would trade a correct answer for a missing one, and what is
+ * actually lost is only negative caching — resolvers ask again sooner, which is a cost the
+ * unconfigured case can pay and a delegated deployment never sees, because a real delegation sets
+ * both keys. {@code null} is accepted rather than convenient: passing it is still the deliberate
+ * effort this paragraph asks for, and every other caller is handed a real SOA by the resolver.
  */
 public record ResolutionResult(
     ResponseCode rcode,
@@ -65,13 +69,23 @@ public record ResolutionResult(
    * the SOA in authority. Also the answer for a name that is merely a prefix of one that has
    * records ({@code x} when only {@code y.x} is configured): NXDOMAIN there would be
    * negative-cached for the whole subtree and would poison {@code y.x}.
+   *
+   * @param soa the zone's synthesized SOA, or null when synthesis is off — see the class comment
    */
   public static ResolutionResult noData(RecordData soa) {
-    return new ResolutionResult(ResponseCode.NOERROR, true, List.of(), List.of(soa));
+    return new ResolutionResult(ResponseCode.NOERROR, true, List.of(), authority(soa));
   }
 
-  /** The name does not exist in a zone we are authoritative for. */
+  /**
+   * The name does not exist in a zone we are authoritative for.
+   *
+   * @param soa the zone's synthesized SOA, or null when synthesis is off — see the class comment
+   */
   public static ResolutionResult nxDomain(RecordData soa) {
-    return new ResolutionResult(ResponseCode.NXDOMAIN, true, List.of(), List.of(soa));
+    return new ResolutionResult(ResponseCode.NXDOMAIN, true, List.of(), authority(soa));
+  }
+
+  private static List<RecordData> authority(RecordData soa) {
+    return soa == null ? List.of() : List.of(soa);
   }
 }
